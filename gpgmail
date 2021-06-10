@@ -214,7 +214,7 @@ if __name__ == '__main__':
                                      passphrase=args.passphrase))
         elif args.encrypt or args.sign_encrypt:
             if mail.get_content_type() == 'multipart/encrypted':
-                sys.stdout.write(mail.as_string())
+                exit(5)
             else:
                 sys.stdout.write(encrypt(mail, args.RECIPIENTS,
                                          args.sign_encrypt,
@@ -226,4 +226,4 @@ if __name__ == '__main__':
                                   args.gnupghome))
     except Exception as e:
         sys.stderr.write(f'{e}')
-        sys.stdout.write(orig_mail)
+        exit(1)
