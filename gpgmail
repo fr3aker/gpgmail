@@ -30,7 +30,7 @@ import re
 import sys
 
 from argparse import ArgumentParser, FileType, RawTextHelpFormatter
-from email import message_from_string
+from email import message_from_binary_file, message_from_string
 from email.message import Message
 from email.mime.base import MIMEBase
 from gnupg import GPG
@@ -56,24 +56,24 @@ def copy_headers(source: Message, target: Message) -> Message:
     return target
 
 
-def decrypt(mail: Message, gnupghome: str = None, **kwargs) -> str:
+def decrypt(mail: Message, gnupghome: str = None, **kwargs) -> bytes:
     """Decrypt the given mail"""
-    decrypted = GPG(gnupghome=gnupghome).decrypt(mail.as_string(), **kwargs)
+    decrypted = GPG(gnupghome=gnupghome).decrypt(mail.as_bytes(), **kwargs)
     if not decrypted.ok:
         raise RuntimeError(f'Could not decrypt message: {decrypted.status}')
-    return str(decrypted)
+    return decrypted.data
 
 
 def encrypt(mail: Message, recipients: List[str], sign_mail: bool = True,
             key: str = None, passphrase: str = None,
             encrypt_headers: bool = False, encrypt_subject: bool = False,
-            gnupghome: str = None) -> str:
+            gnupghome: str = None) -> bytes:
     """Encrypt the given mail"""
     if sign_mail and key:
         pmail = message_from_string(sign(mail, key, passphrase, gnupghome))
     else:
         pmail = protected_headers_mail(mail)
-    encrypted = GPG(gnupghome=gnupghome).encrypt(pmail.as_string(), recipients)
+    encrypted = GPG(gnupghome=gnupghome).encrypt(pmail.as_bytes(), recipients)
     if not encrypted.ok:
         raise RuntimeError(f'Could not encrypt message: {encrypted.status}')
 
@@ -106,7 +106,7 @@ def encrypt(mail: Message, recipients: List[str], sign_mail: bool = True,
 
     pgp_msg.attach(pgp_msg_part1)
     pgp_msg.attach(pgp_msg_part2)
-    return copy_headers(pmail, pgp_msg).as_string()
+    return copy_headers(pmail, pgp_msg).as_bytes()
 
 
 def protected_headers_mail(mail: Message) -> Message:
@@ -144,11 +144,11 @@ def protected_headers_mail(mail: Message) -> Message:
 
 
 def sign(mail: Message, key: str, passphrase: str = None,
-         gnupghome: str = None) -> str:
+         gnupghome: str = None) -> bytes:
     """Sign the given mail"""
     pmail = protected_headers_mail(mail)
-    signature = GPG(gnupghome=gnupghome).sign(re.sub('\r?\n', '\r\n',
-                                                     pmail.as_string()),
+    signature = GPG(gnupghome=gnupghome).sign(re.sub(b'\r?\n', b'\r\n',
+                                                     pmail.as_bytes()),
                                               keyid=key, passphrase=passphrase,
                                               detach=True)
     if signature.status != 'signature created':
@@ -170,7 +170,7 @@ def sign(mail: Message, key: str, passphrase: str = None,
 
     pgp_msg.attach(pmail)
     pgp_msg.attach(pgp_msg_signature)
-    return copy_headers(pmail, pgp_msg).as_string()
+    return copy_headers(pmail, pgp_msg).as_bytes()
 
 
 if __name__ == '__main__':
@@ -184,8 +184,11 @@ if __name__ == '__main__':
                         help='Passphrase for given GnuPG key.')
     parser.add_argument('RECIPIENTS', nargs='*',
                         help='Key id or email of keys to encrypt for.')
-    parser.add_argument('MAIL', type=FileType('r'), nargs='?',
+    parser.add_argument('-i', '--infile', type=FileType('rb'),
                         default=sys.stdin, help='E-mail, default from stdin.')
+    parser.add_argument('-o', '--outfile', type=FileType('wb'),
+                        default=sys.stdout, help='Processed E-mail, default '
+                        'to stdout')
 
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('-H', '--encrypt-headers', action='store_true',
@@ -206,24 +209,26 @@ if __name__ == '__main__':
                        help='Sign and encrypt E-mail.')
     args = parser.parse_args()
 
-    orig_mail = args.MAIL.read()
+    outfile = args.outfile
     try:
-        mail = message_from_string(orig_mail)
+        if hasattr(args.infile, 'buffer'):
+            args.infile = args.infile.buffer
+        mail = message_from_binary_file(args.infile)
         if args.decrypt:
-            sys.stdout.write(decrypt(mail, args.gnupghome,
-                                     passphrase=args.passphrase))
+            outfile.write(decrypt(mail, args.gnupghome,
+                                  passphrase=args.passphrase))
         elif args.encrypt or args.sign_encrypt:
             if mail.get_content_type() == 'multipart/encrypted':
                 exit(5)
             else:
-                sys.stdout.write(encrypt(mail, args.RECIPIENTS,
-                                         args.sign_encrypt,
-                                         args.key, args.passphrase,
-                                         args.encrypt_headers,
-                                         args.encrypt_subject, args.gnupghome))
+                outfile.write(encrypt(mail, args.RECIPIENTS,
+                                      args.sign_encrypt,
+                                      args.key, args.passphrase,
+                                      args.encrypt_headers,
+                                      args.encrypt_subject, args.gnupghome))
         elif args.sign:
-            sys.stdout.write(sign(mail, args.key, args.passphrase,
-                                  args.gnupghome))
+            outfile.write(sign(mail, args.key, args.passphrase,
+                               args.gnupghome))
     except Exception as e:
         sys.stderr.write(f'{e}')
         exit(1)
