@@ -69,11 +69,6 @@ def encrypt(mail: Message, recipients: List[str], sign_mail: bool = True,
             encrypt_headers: bool = False, encrypt_subject: bool = False,
             gnupghome: str = None) -> str:
     """Encrypt the given mail"""
-
-    content_transfer_encoding = None
-    if 'Content-Transfer-Encoding' in mail:
-        content_transfer_encoding = mail['Content-Transfer-Encoding']
-
     if sign_mail and key:
         pmail = message_from_string(sign(mail, key, passphrase, gnupghome))
     else:
